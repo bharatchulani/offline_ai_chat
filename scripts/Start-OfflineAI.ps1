@@ -21,6 +21,43 @@ function Test-Command {
     $null -ne (Get-Command $Name -ErrorAction SilentlyContinue)
 }
 
+function Test-DockerReady {
+    docker version *> $null
+    $LASTEXITCODE -eq 0
+}
+
+function Start-DockerDesktop {
+    $candidates = @(
+        "$env:ProgramFiles\Docker\Docker\Docker Desktop.exe",
+        "${env:ProgramFiles(x86)}\Docker\Docker\Docker Desktop.exe",
+        "$env:LOCALAPPDATA\Docker\Docker Desktop.exe"
+    )
+    $dockerDesktop = $candidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+    if (-not $dockerDesktop) {
+        Write-Warning "Docker Desktop executable was not found. Start Docker Desktop manually, then rerun this launcher."
+        return
+    }
+
+    Write-Host "Starting Docker Desktop..."
+    Start-Process -FilePath $dockerDesktop | Out-Null
+}
+
+function Wait-DockerReady {
+    param([int]$TimeoutSeconds = 120)
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        if (Test-DockerReady) {
+            Write-Host "Docker is ready."
+            return $true
+        }
+        Start-Sleep -Seconds 3
+        Write-Host "." -NoNewline
+    }
+    Write-Host ""
+    return $false
+}
+
 Set-Location $ProjectRoot
 New-Item -ItemType Directory -Force $Logs | Out-Null
 
@@ -40,10 +77,22 @@ if (-not (Test-Path $Python)) {
 }
 
 Write-Step "Checking Docker"
-docker version | Out-Null
+if (-not (Test-DockerReady)) {
+    Write-Warning "Docker is installed, but the Docker engine is not running yet."
+    Start-DockerDesktop
+    if (-not (Wait-DockerReady -TimeoutSeconds 150)) {
+        throw "Docker Desktop did not become ready. Open Docker Desktop, wait until it says it is running, then rerun Start-OfflineAI.cmd."
+    }
+}
+else {
+    Write-Host "Docker is ready."
+}
 
 Write-Step "Starting Open WebUI container"
 docker compose up -d
+if ($LASTEXITCODE -ne 0) {
+    throw "docker compose up failed. Confirm Docker Desktop is running, then rerun Start-OfflineAI.cmd."
+}
 
 Write-Step "Checking Ollama"
 try {
