@@ -54,7 +54,7 @@ def _create_claims_files(directory: Path) -> None:
                 SELECT * FROM (VALUES
                     ('npi_1', 'Cardiology'),
                     ('npi_2', 'Primary Care')
-                ) AS providers(provider_npi, specialty)
+                ) AS providers(provider_npi, provider_specialty)
             ) TO ? (FORMAT parquet)
             """,
             [str(directory / "providers.parquet")],
@@ -110,6 +110,7 @@ def test_join_query_groups_metrics_across_parquet_files(tmp_path: Path) -> None:
     rows = {row["providers_specialty"]: row["sum_claims_total_paid"] for row in result["rows"]}
 
     assert rows == {"Cardiology": 125.0, "Primary Care": 50.0}
+    assert '"providers"."provider_specialty"' in result["sql_preview"]
     assert "JOIN read_parquet" in result["sql_preview"]
 
 

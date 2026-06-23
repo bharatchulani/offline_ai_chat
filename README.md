@@ -171,8 +171,10 @@ Example prompts:
 - `Describe the schema of sales.parquet.`
 - `Summarize every column in sales.parquet.`
 - `Group sales.parquet by region and calculate count and average revenue.`
-- `Join claims.parquet to providers.parquet on provider_npi and show claim count plus total paid by provider specialty.`
+- `Join claims.parquet to providers.parquet on provider_npi. Group by providers.provider_specialty. Return count of claims and sum of claims.total_paid.`
 - `Preview the SQL only for joining claims.parquet to patients.parquet on patient_id and counting claims by patient gender.`
+
+For metric-style questions, put categories/dimensions in `group_by` and numeric measures in `metrics`. For example, use `providers.provider_specialty` in `group_by`, but use `sum(claims.total_paid)` as a metric. Do not group by `claims.total_paid` unless you literally want one group for each paid amount.
 
 For the health-claims dummy data, useful join keys are likely:
 

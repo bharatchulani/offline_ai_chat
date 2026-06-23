@@ -29,8 +29,14 @@ class AnalyticsFilter(BaseModel):
 
 
 class AnalyticsMetric(BaseModel):
-    function: Aggregate
-    column: str | None = None
+    function: Aggregate = Field(description="Aggregation to calculate. Use count for row/claim counts, sum for totals.")
+    column: str | None = Field(
+        default=None,
+        description=(
+            "Column to aggregate. For joins, prefer qualified names like claims.total_paid. "
+            "Do not put numeric measure columns such as total_paid in group_by; aggregate them with sum/avg/min/max."
+        ),
+    )
 
     @model_validator(mode="after")
     def validate_column(self) -> "AnalyticsMetric":
@@ -46,28 +52,47 @@ class AnalyticsOrder(BaseModel):
 
 class AnalyticsQuery(BaseModel):
     dataset: str = Field(description="A relative .parquet filename from /analytics/datasets, or * for all files")
-    columns: list[str] = Field(default_factory=list)
+    columns: list[str] = Field(default_factory=list, description="Non-aggregated columns to return")
     filters: list[AnalyticsFilter] = Field(default_factory=list)
-    group_by: list[str] = Field(default_factory=list)
-    metrics: list[AnalyticsMetric] = Field(default_factory=list)
+    group_by: list[str] = Field(
+        default_factory=list,
+        description="Dimension/categorical columns to group by. Do not group by numeric measures that should be summed or averaged.",
+    )
+    metrics: list[AnalyticsMetric] = Field(default_factory=list, description="Aggregations for numeric measures and counts")
     order_by: list[AnalyticsOrder] = Field(default_factory=list)
     limit: int = Field(default=100, ge=1, le=1000)
 
 
 class AnalyticsJoin(BaseModel):
     dataset: str = Field(description="Dataset to join to the base dataset")
-    left_column: str = Field(description="Column on the already-joined left side, optionally qualified")
-    right_column: str = Field(description="Column on this join dataset, optionally qualified")
+    left_column: str = Field(description="Column on the already-joined left side, preferably qualified, e.g. claims.provider_npi")
+    right_column: str = Field(description="Column on this join dataset, optionally qualified, e.g. provider_npi")
     join_type: JoinType = "inner"
 
 
 class AnalyticsJoinQuery(BaseModel):
     base_dataset: str = Field(description="Starting .parquet dataset from /analytics/datasets")
     joins: list[AnalyticsJoin] = Field(default_factory=list)
-    columns: list[str] = Field(default_factory=list, description="Columns to select, preferably qualified as dataset.column")
+    columns: list[str] = Field(
+        default_factory=list,
+        description="Non-aggregated columns to select, preferably qualified as dataset.column. Use only with group_by when metrics are present.",
+    )
     filters: list[AnalyticsFilter] = Field(default_factory=list)
-    group_by: list[str] = Field(default_factory=list, description="Columns to group by, preferably qualified as dataset.column")
-    metrics: list[AnalyticsMetric] = Field(default_factory=list)
+    group_by: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Dimension/categorical columns to group by, preferably qualified as dataset.column. "
+            "Examples: providers.provider_specialty, patients.sex, diagnosis_xwalk.diagnosis_desc. "
+            "Do not group by total_paid; use metrics=[{function:'sum', column:'claims.total_paid'}]."
+        ),
+    )
+    metrics: list[AnalyticsMetric] = Field(
+        default_factory=list,
+        description=(
+            "Aggregations to calculate. Example for total paid: "
+            "{function:'sum', column:'claims.total_paid'}. Example for claim count: {function:'count', column:'claims.claim_id'}."
+        ),
+    )
     order_by: list[AnalyticsOrder] = Field(default_factory=list)
     limit: int = Field(default=100, ge=1, le=1000)
     dry_run: bool = Field(default=False, description="Return the SQL preview without executing the query")
@@ -95,6 +120,20 @@ def _alias(dataset: str) -> str:
 
 def _output_alias(column: str) -> str:
     return column.replace(".", "_")
+
+
+def _resolve_column_name(name: str, available: set[str], dataset_alias: str) -> str:
+    """Resolve exact columns plus safe singular shorthand like providers.specialty -> provider_specialty."""
+    if name in available:
+        return name
+    alias_prefix = dataset_alias.removesuffix("s")
+    candidates = [
+        column for column in available
+        if column.endswith(f"_{name}") or column == f"{alias_prefix}_{name}"
+    ]
+    if len(candidates) == 1:
+        return candidates[0]
+    return name
 
 
 def _json_value(value: Any) -> Any:
@@ -369,24 +408,33 @@ class ParquetAnalytics:
                 raise ValueError(f"Unknown dataset alias '{alias}' in column '{column}'")
             if alias not in allowed_aliases:
                 raise ValueError(f"Dataset alias '{alias}' is not available at this point in the join")
-            if name not in schemas[alias_to_dataset[alias]]:
-                raise ValueError(f"Unknown column '{name}' on dataset alias '{alias}'")
-            return f"{_identifier(alias)}.{_identifier(name)}"
+            resolved = _resolve_column_name(name, schemas[alias_to_dataset[alias]], alias)
+            if resolved not in schemas[alias_to_dataset[alias]]:
+                raise ValueError(
+                    f"Unknown column '{name}' on dataset alias '{alias}'. "
+                    f"Available columns: {sorted(schemas[alias_to_dataset[alias]])}"
+                )
+            return f"{_identifier(alias)}.{_identifier(resolved)}"
 
         if default_alias:
-            if column not in schemas[alias_to_dataset[default_alias]]:
-                raise ValueError(f"Unknown column '{column}' on dataset alias '{default_alias}'")
-            return f"{_identifier(default_alias)}.{_identifier(column)}"
+            resolved = _resolve_column_name(column, schemas[alias_to_dataset[default_alias]], default_alias)
+            if resolved not in schemas[alias_to_dataset[default_alias]]:
+                raise ValueError(
+                    f"Unknown column '{column}' on dataset alias '{default_alias}'. "
+                    f"Available columns: {sorted(schemas[alias_to_dataset[default_alias]])}"
+                )
+            return f"{_identifier(default_alias)}.{_identifier(resolved)}"
 
         matches = [
             alias for alias in allowed_aliases
-            if column in schemas[alias_to_dataset[alias]]
+            if _resolve_column_name(column, schemas[alias_to_dataset[alias]], alias) in schemas[alias_to_dataset[alias]]
         ]
         if not matches:
             raise ValueError(f"Unknown column '{column}'")
         if len(matches) > 1:
             raise ValueError(f"Ambiguous column '{column}'. Use dataset.column, for example claims.{column}")
-        return f"{_identifier(matches[0])}.{_identifier(column)}"
+        resolved = _resolve_column_name(column, schemas[alias_to_dataset[matches[0]]], matches[0])
+        return f"{_identifier(matches[0])}.{_identifier(resolved)}"
 
     @staticmethod
     def _records(query: str, parameters: list[Any]) -> list[dict[str, Any]]:
