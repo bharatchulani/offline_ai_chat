@@ -54,6 +54,22 @@ Model names are configurable; the chat and embedding model must exist in `ollama
 
 ## 3. Run Open WebUI
 
+For normal use after setup, double-click:
+
+```text
+Start-OfflineAI.cmd
+```
+
+That on-demand launcher starts Open WebUI, starts the local FastAPI analytics/RAG tool server, checks Ollama, and opens <http://localhost:3000>. It does not configure Windows startup and it does not run automatically when the machine boots.
+
+To stop the stack later:
+
+```powershell
+.\scripts\Stop-OfflineAI.ps1
+```
+
+Manual startup is:
+
 ```powershell
 docker compose up -d
 docker compose ps
