@@ -1,0 +1,2 @@
+"""Offline RAG service package."""
+

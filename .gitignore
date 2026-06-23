@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# Environment and local configuration
+.env
+.env.*
+!.env.example
+
+# IDE and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Build and package output
+build/
+dist/
+*.egg-info/
+wheels/
+
+# Large offline-install artifacts and local AI data
+artifacts/
+models/
+*.tar
+*.tar.gz
+*.zip
+*.gguf
+*.safetensors
+
+# Local application data
+data/
+logs/
+*.log
+*.db
+*.sqlite
+*.sqlite3
+
